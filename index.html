@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>粒子·星海幻境 v0.2</title>
+    <style>
+        body { margin:0; overflow:hidden; background:#01020a; font-family:sans-serif; color:#fff; user-select:none; }
+        canvas { display:block; }
+        #ui-layer { position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; display:flex; flex-direction:column; justify-content:space-between; }
+        .header { padding:20px 15px; }
+        .title { font-size:22px; font-weight:300; letter-spacing:2px; text-shadow:0 0 10px rgba(0,245,255,0.8); margin:0; }
+        .subtitle { font-size:11px; color:#00f5ff; opacity:0.6; margin-top:4px; }
+        #status { position:absolute; top:20px; right:15px; font-size:11px; color:#00f5ff; background:rgba(0,245,255,0.12); padding:5px 12px; border-radius:20px; border:1px solid rgba(0,245,255,0.25); backdrop-filter:blur(5px); }
+        .bottom-bar { padding:15px; display:flex; justify-content:center; gap:8px; pointer-events:auto; flex-wrap:wrap; margin-bottom:10px; }
+        button { background:rgba(0,245,255,0.03); border:1px solid rgba(0,245,255,0.3); color:#00f5ff; padding:6px 12px; font-size:12px; border-radius:15px; cursor:pointer; transition:all 0.2s; }
+        button:hover, button.active { background:rgba(0,245,255,0.25); box-shadow:0 0 10px rgba(0,245,255,0.4); border-color:#00f5ff; }
+        #video-input { position:absolute; bottom:15px; left:15px; width:70px; height:52px; border:1px solid rgba(0,245,255,0.3); transform:scaleX(-1); border-radius:4px; opacity:0.25; pointer-events:none; }
+    </style>
+    <script src="https://unpkg.com/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script type="importmap"> { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } } </script>
+</head>
+<body>
+    <div id="ui-layer">
+        <div class="header"><h1 class="title">星海幻境 v0.2</h1><div class="subtitle">星体公式重构 ＆ 纯净手势版</div></div>
+        <div id="status">连通相机中...</div>
+        <div class="bottom-bar">
+            <button id="btn-solarsystem" class="active">太阳系</button>
+            <button id="btn-saturn">土星</button>
+            <button id="btn-earth">地球</button>
+            <button id="btn-galaxy">银河系</button>
+            <button id="btn-rose">玫瑰花</button>
+            <button id="btn-heart">饱满心</button>
+        </div>
+    </div>
+    <video id="video-input" autoplay playsinline></video>
+    <script type="module">
+        import * as THREE from 'three';
+
+        const PARTICLE_COUNT = 12000; // 提升粒子数量增加饱满度
+        const scene = new THREE.Scene(); scene.fog = new THREE.FogExp2(0x01020a, 0.0012);
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 10000); camera.position.z = 750;
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight); renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); document.body.appendChild(renderer.domElement);
+
+        function createTexture() {
+            const c = document.createElement('canvas'); c.width = 64; c.height = 64;
+            const ctx = c.getContext('2d'), g = ctx.createRadialGradient(32,32,0,32,32,32);
+            g.addColorStop(0, '#ffffff'); g.addColorStop(0.25, 'rgba(0,245,255,0.85)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = g; ctx.fillRect(0,0,64,64); return new THREE.CanvasTexture(c);
+        }
+
+        const geometry = new THREE.BufferGeometry(), positions = new Float32Array(PARTICLE_COUNT * 3), targetPositions = new Float32Array(PARTICLE_COUNT * 3), sizes = new Float32Array(PARTICLE_COUNT);
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+            positions[i*3] = (Math.random()-0.5)*200; positions[i*3+1] = (Math.random()-0.5)*200; positions[i*3+2] = (Math.random()-0.5)*200; sizes[i] = Math.random()*5+3.5;
+        }
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3)); geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+        
+        const material = new THREE.ShaderMaterial({
+            uniforms: { color: { value: new THREE.Color(0x00f5ff) }, tex: { value: createTexture() } },
+            vertexShader: `attribute float size; void main() { vec4 mv = modelViewMatrix * vec4(position, 1.0); gl_PointSize = size * (750.0 / -mv.z); gl_Position = projectionMatrix * mv; }`,
+            fragmentShader: `uniform vec3 color; uniform sampler2D tex; void main() { gl_FragColor = vec4(color, 1.0) * texture2D(tex, gl_PointCoord); }`,
+            blending: THREE.AdditiveBlending, depthTest: false, transparent: true
+        });
+        const particleSystem = new THREE.Points(geometry, material); scene.add(particleSystem);
+
+        let mode = 'solarsystem';
+        function updateShape() {
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                let idx = i * 3;
+                if (mode === 'solarsystem') {
+                    if (i < PARTICLE_COUNT * 0.2) { // 太阳核心球体
+                        let u = Math.random(), v = Math.random(), theta = u * 2.0 * Math.PI, phi = Math.acos(2.0 * v - 1.0), r = Math.random() * 45;
+                        targetPositions[idx] = r * Math.sin(phi) * Math.cos(theta); targetPositions[idx+1] = r * Math.sin(phi) * Math.sin(theta); targetPositions[idx+2] = r * Math.cos(phi);
+                    } else { // 各大行星轨道环
+                        let r = 100 + (i % 6) * 45 + Math.random() * 12, t = Math.random() * Math.PI * 2;
+                        targetPositions[idx] = Math.cos(t) * r; targetPositions[idx+1] = (Math.random() - 0.5) * 8; targetPositions[idx+2] = Math.sin(t) * r;
+                    }
+                } else if (mode === 'saturn') {
+                    if (i < PARTICLE_COUNT * 0.45) { // 土星本体球
+                        let u = Math.random(), v = Math.random(), t = u * 2 * Math.PI, p = Math.acos(2 * v - 1), r = Math.random() * 80;
+                        targetPositions[idx] = r * Math.sin(p) * Math.cos(t); targetPositions[idx+1] = r * Math.sin(p) * Math.sin(t) * 0.85; targetPositions[idx+2] = r * Math.cos(p);
+                    } else { // 巨大的土星环
+                        let r = 130 + Math.random() * 110, t = Math.random() * Math.PI * 2;
+                        targetPositions[idx] = Math.cos(t) * r; targetPositions[idx+1] = Math.sin(t) * r * 0.3 + (Math.random()-0.5)*5; targetPositions[idx+2] = Math.sin(t) * r * 0.8;
+                    }
+                } else if (mode === 'earth') { // 高密度完美的标准地球球体
+                    let u = Math.random(), v = Math.random(), t = u * 2.0 * Math.PI, p = Math.acos(2.0 * v - 1.0), r = 160 + (Math.random()-0.5)*6;
+                    targetPositions[idx] = r * Math.sin(p) * Math.cos(t); targetPositions[idx+1] = r * Math.sin(p) * Math.sin(t); targetPositions[idx+2] = r * Math.cos(p);
+                } else if (mode === 'galaxy') { // 经典的双旋臂阿基米德螺旋银河系
+                    let arm = i % 2 === 0 ? 0 : Math.PI, r = Math.random() * 280, theta = r * 0.04 + arm + (Math.random()-0.5)*0.25;
+                    targetPositions[idx] = Math.cos(theta) * r; targetPositions[idx+1] = (Math.random() - 0.5) * (35 - r * 0.08); targetPositions[idx+2] = Math.sin(theta) * r;
+                } else if (mode === 'rose') { // 三维玫瑰花线花瓣数学模型
+                    let t = (i / PARTICLE_COUNT) * Math.PI * 14, k = 4, r = 180 * Math.sin(k * t) * (0.6 + 0.4 * Math.random());
+                    targetPositions[idx] = r * Math.cos(t); targetPositions[idx+1] = (i / PARTICLE_COUNT) * 120 - 60 + (Math.random()-0.5)*10; targetPositions[idx+2] = r * Math.sin(t);
+                } else if (mode === 'heart') { // 3D 笛卡尔立体饱满爱心方程（核心修改！）
+                    let theta = Math.random() * Math.PI * 2, phi = Math.acos(Math.random() * 2 - 1);
+                    let r = 13, sinP = Math.sin(phi), cosP = Math.cos(phi), sinT = Math.sin(theta), cosT = Math.cos(theta);
+                    let x = r * sinP * cosT, y = r * sinP * sinT, z = r * cosP; y = y + 2.0 * Math.sqrt(Math.abs(x)); // 拓宽心顶，增加厚度和饱满度
+                    targetPositions[idx] = x * 10; targetPositions[idx+1] = y * 10 - 50; targetPositions[idx+2] = z * 9;
+                }
+            }
+        }
+        updateShape();
+
+        const modes = ['solarsystem','saturn','earth','galaxy','rose','heart'];
+        modes.forEach(id => {
+            document.getElementById('btn-'+id).onclick = (e) => {
+                mode = id; modes.forEach(b => document.getElementById('btn-'+b).className='');
+                e.target.className='active'; updateShape();
+            };
+        });
+        let handState = 'none', handCenter = new THREE.Vector3();
+        const statEl = document.getElementById('status'), vid = document.getElementById('video-input');
+
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${file}`});
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.55, minTrackingConfidence: 0.55 });
+        const map3D = (l) => new THREE.Vector3(-(l.x-0.5)*1100, -(l.y-0.5)*850, -l.z*900);
+
+        let modelReady = false;
+        hands.onResults((res) => {
+            modelReady = true; 
+            if (res.multiHandLandmarks?.length > 0) {
+                statEl.innerText = "手势已捕获 (互动中)"; statEl.style.color = "#00ff88"; statEl.style.borderColor = "#00ff88";
+                const lm = res.multiHandLandmarks[0];
+                const wrist=map3D(lm[0]), mid=map3D(lm[12]), pinky=map3D(lm[20]);
+                handCenter.copy(wrist).add(mid).multiplyScalar(0.5); // 精确锚定手掌心
+                
+                // 精简逻辑：只要手掌张开，五指伸直，就是吸附互动状态
+                if (mid.distanceTo(wrist) > 200 && pinky.distanceTo(wrist) > 160) { handState = 'attract'; } 
+                else { handState = 'hover'; }
+            } else { statEl.innerText = "寻星中 (请将手推向镜头)"; statEl.style.color = "#00f5ff"; statEl.style.borderColor = "rgba(0,245,255,0.3)"; handState = 'none'; }
+        });
+
+        let isProcessing = false;
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: "user", width: { ideal: 480 }, height: { ideal: 360 } }
+                });
+                vid.srcObject = stream;
+                vid.addEventListener('playing', () => {
+                    statEl.innerText = "唤醒内核中...";
+                    function predictLoop() {
+                        if (vid.readyState >= 2 && !isProcessing) {
+                            isProcessing = true;
+                            hands.send({image: vid}).then(() => { isProcessing = false; }).catch(() => { isProcessing = false; });
+                        }
+                        if(!modelReady && vid.currentTime > 2.5) { statEl.innerText = "首次载入略慢，请稍候..."; }
+                        requestAnimationFrame(predictLoop);
+                    }
+                    predictLoop();
+                });
+                vid.play();
+            } catch (err) { statEl.innerText = "相机受阻，请用原生Chrome打开"; }
+        }
+        
+        if (document.readyState === 'complete') { startCamera(); } else { window.addEventListener('load', startCamera); }
+
+        const clock = new THREE.Clock();
+        function animate() {
+            requestAnimationFrame(animate);
+            const time = clock.getElapsedTime(), posArr = geometry.attributes.position.array;
+            
+            // 没手势时自主旋转，手势入镜时顺滑静止
+            if (handState === 'none') { particleSystem.rotation.y = time*0.06; particleSystem.rotation.z = time*0.015; }
+            else { particleSystem.rotation.y *= 0.94; particleSystem.rotation.z *= 0.94; }
+
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                let idx = i * 3, tx = targetPositions[idx], ty = targetPositions[idx+1], tz = targetPositions[idx+2], spd = 0.04;
+                
+                if (handState === 'attract') { // 手掌张开：粒子化身星河风暴，完美向手心聚拢
+                    let d = Math.sqrt((posArr[idx]-handCenter.x)**2 + (posArr[idx+1]-handCenter.y)**2 + (posArr[idx+2]-handCenter.z)**2);
+                    let r = 25 + Math.sin(time*3 + i)*12, t = time*4 + i*0.01;
+                    // 在手掌周围形成高速环绕的饱满星云粒子漩涡
+                    tx = handCenter.x + Math.cos(t)*r; ty = handCenter.y + Math.sin(t)*r*0.5; tz = handCenter.z + Math.sin(t)*r;
+                    spd = d > 150 ? 0.08 : 0.15; // 距离远快拉，距离近柔和
+                }
+                
+                // 加入基础星光微幅呼吸摆动，让星云更有灵气
+                tx += Math.sin(time + i * 0.1) * 0.8; ty += Math.cos(time * 0.8 + i * 0.1) * 0.8;
+                posArr[idx] += (tx - posArr[idx]) * spd; posArr[idx+1] += (ty - posArr[idx+1]) * spd; posArr[idx+2] += (tz - posArr[idx+2]) * spd;
+            }
+            geometry.attributes.position.needsUpdate = true; renderer.render(scene, camera);
+        }
+        animate();
+        window.onresize = () => { camera.aspect = window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); };
+    </script>
+</body>
+</html>
